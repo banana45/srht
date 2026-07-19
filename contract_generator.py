@@ -19,11 +19,36 @@ class ContractRow:
     signing_date: str = ""
 
 
+@dataclass(frozen=True)
+class StoreProofRow:
+    enterprise_name: str
+    business_license: str
+    account_name: str
+    shop_url: str
+    proof_date: str
+
+
 HEADER_ALIASES = {
     "party_a": {"party_a", "甲方", "甲方名称", "甲方名字", "客户名称"},
     "start_date": {"start_date", "开始日期", "合同开始日期", "起始日期"},
     "end_date": {"end_date", "结束日期", "合同结束日期", "截止日期"},
     "signing_date": {"signing_date", "签署日期", "签订日期", "日期"},
+}
+
+STORE_PROOF_HEADER_ALIASES = {
+    "enterprise_name": {"enterprise_name", "企业名", "企业名称", "公司名称", "认证主体"},
+    "business_license": {"business_license", "营业执照", "营业执照号", "统一社会信用代码"},
+    "account_name": {"account_name", "账户名称", "账号名称", "店铺名称"},
+    "shop_url": {"shop_url", "店铺地址", "店铺链接", "店铺URL", "店铺url"},
+    "proof_date": {"proof_date", "时间", "日期", "证明时间", "证明日期"},
+}
+
+STORE_PROOF_TEMPLATE_VALUES = {
+    "enterprise_name": "厦门淑莱汝信息科技有限公司",
+    "business_license": "91350206MAKGH6NDXJ",
+    "account_name": "厦门淑莱汝网络设计",
+    "shop_url": "https://xmslr.qidian.hzshengruikj.cn/",
+    "proof_date": "2026年7月19日",
 }
 
 
@@ -62,6 +87,33 @@ def normalize_row(raw: dict[str, object]) -> ContractRow:
     )
 
 
+def normalize_store_proof_row(raw: dict[str, object]) -> StoreProofRow:
+    enterprise_name = str(raw.get("enterprise_name", "") or "").strip()
+    business_license = str(raw.get("business_license", "") or "").strip()
+    account_name = str(raw.get("account_name", "") or "").strip()
+    shop_url = str(raw.get("shop_url", "") or "").strip()
+    proof_date = str(raw.get("proof_date", "") or "").strip()
+
+    if not enterprise_name:
+        raise ValueError("企业名不能为空")
+    if not business_license:
+        raise ValueError("营业执照不能为空")
+    if not account_name:
+        raise ValueError("账户名称不能为空")
+    if not shop_url:
+        raise ValueError("店铺地址不能为空")
+    if not proof_date:
+        raise ValueError("时间不能为空")
+
+    return StoreProofRow(
+        enterprise_name=enterprise_name,
+        business_license=business_license,
+        account_name=account_name,
+        shop_url=shop_url,
+        proof_date=format_chinese_date(proof_date),
+    )
+
+
 def parse_csv_rows(file_obj: BinaryIO) -> list[dict[str, str]]:
     content = file_obj.read()
     text = content.decode("utf-8-sig") if isinstance(content, bytes) else content
@@ -80,6 +132,12 @@ def parse_csv_rows(file_obj: BinaryIO) -> list[dict[str, str]]:
             }
         )
     return rows
+
+
+def parse_csv_store_proof_rows(file_obj: BinaryIO) -> list[dict[str, str]]:
+    content = file_obj.read()
+    text = content.decode("utf-8-sig") if isinstance(content, bytes) else content
+    return _parse_csv_text(text, STORE_PROOF_HEADER_ALIASES, _store_proof_keys())
 
 
 def parse_xlsx_rows(file_obj: BinaryIO) -> list[dict[str, str]]:
@@ -107,6 +165,10 @@ def parse_xlsx_rows(file_obj: BinaryIO) -> list[dict[str, str]]:
         )
     workbook.close()
     return rows
+
+
+def parse_xlsx_store_proof_rows(file_obj: BinaryIO) -> list[dict[str, str]]:
+    return _parse_xlsx_rows(file_obj, STORE_PROOF_HEADER_ALIASES, _store_proof_keys())
 
 
 def generate_contract(
@@ -156,6 +218,70 @@ def generate_contract_archive(
                     progress(row_index, percent, message)
 
             generate_contract(template_path, target, row, progress=on_contract_progress)
+            generated_paths.append(target)
+            if progress:
+                progress(index, 100, f"已完成 {index}/{total}")
+
+        with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for path in generated_paths:
+                archive.write(path, path.name)
+
+
+def generate_store_proof(
+    template_path: Path,
+    output_path: Path,
+    row: StoreProofRow,
+    progress: Callable[[int, str], None] | None = None,
+) -> None:
+    template_path = Path(template_path)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _emit(progress, 5, "读取模板")
+
+    replacements = {
+        STORE_PROOF_TEMPLATE_VALUES["enterprise_name"]: row.enterprise_name,
+        STORE_PROOF_TEMPLATE_VALUES["business_license"]: row.business_license,
+        STORE_PROOF_TEMPLATE_VALUES["account_name"]: row.account_name,
+        STORE_PROOF_TEMPLATE_VALUES["shop_url"]: row.shop_url,
+        STORE_PROOF_TEMPLATE_VALUES["proof_date"]: row.proof_date,
+    }
+
+    with zipfile.ZipFile(template_path, "r") as source, zipfile.ZipFile(
+        output_path, "w", zipfile.ZIP_DEFLATED
+    ) as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename == "word/document.xml":
+                _emit(progress, 35, "填充经营证明内容")
+                xml = data.decode("utf-8")
+                data = _replace_document_text(xml, replacements).encode("utf-8")
+            target.writestr(item, data)
+
+    _emit(progress, 100, "完成")
+
+
+def generate_store_proof_archive(
+    template_path: Path,
+    output_path: Path,
+    rows: list[StoreProofRow],
+    progress: Callable[[int, int, str], None] | None = None,
+) -> None:
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        generated_paths: list[Path] = []
+        total = len(rows)
+        for index, row in enumerate(rows, start=1):
+            safe_name = _safe_filename(row.enterprise_name) or f"store-proof-{index}"
+            target = tmp_path / f"{index:03d}-{safe_name}-店铺经营证明.docx"
+
+            def on_proof_progress(percent: int, message: str, row_index: int = index) -> None:
+                if progress:
+                    progress(row_index, percent, message)
+
+            generate_store_proof(template_path, target, row, progress=on_proof_progress)
             generated_paths.append(target)
             if progress:
                 progress(index, 100, f"已完成 {index}/{total}")
@@ -309,10 +435,84 @@ def _xml_text_unescape(value: str) -> str:
     return html.unescape(value)
 
 
-def _canonical_header(header: str | None) -> str:
+def _replace_document_text(xml: str, replacements: dict[str, str]) -> str:
+    def replace_paragraph(match: re.Match[str]) -> str:
+        paragraph = match.group(0)
+        for old, new in replacements.items():
+            paragraph = _replace_visible_text(paragraph, old, new)
+        return paragraph
+
+    return re.sub(r"<w:p[\s\S]*?</w:p>", replace_paragraph, xml)
+
+
+def _replace_visible_text(paragraph: str, old: str, new: str) -> str:
+    text = _paragraph_text(paragraph)
+    start = text.find(old)
+    if start == -1:
+        return paragraph
+    return _replace_text_range(paragraph, start, start + len(old), new, underline=False)
+
+
+def _parse_csv_text(
+    text: str,
+    aliases: dict[str, set[str]],
+    keys: tuple[str, ...],
+) -> list[dict[str, str]]:
+    reader = csv.DictReader(text.splitlines())
+    if not reader.fieldnames:
+        return []
+
+    mapped_headers = {_canonical_header(header, aliases): header for header in reader.fieldnames}
+    rows: list[dict[str, str]] = []
+    for source in reader:
+        rows.append(
+            {
+                key: str(source.get(mapped_headers.get(key, ""), "") or "").strip()
+                for key in keys
+            }
+        )
+    return rows
+
+
+def _parse_xlsx_rows(
+    file_obj: BinaryIO,
+    aliases: dict[str, set[str]],
+    keys: tuple[str, ...],
+) -> list[dict[str, str]]:
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(file_obj, read_only=True, data_only=True)
+    sheet = workbook.active
+    rows_iter = sheet.iter_rows(values_only=True)
+    headers = next(rows_iter, None)
+    if not headers:
+        return []
+
+    mapped_indexes = {_canonical_header(str(header or ""), aliases): index for index, header in enumerate(headers)}
+    rows: list[dict[str, str]] = []
+    for source in rows_iter:
+        if not any(source):
+            continue
+        rows.append(
+            {
+                key: _cell_value(source[mapped_indexes[key]])
+                if key in mapped_indexes and mapped_indexes[key] < len(source)
+                else ""
+                for key in keys
+            }
+        )
+    workbook.close()
+    return rows
+
+
+def _store_proof_keys() -> tuple[str, ...]:
+    return ("enterprise_name", "business_license", "account_name", "shop_url", "proof_date")
+
+
+def _canonical_header(header: str | None, aliases: dict[str, set[str]] = HEADER_ALIASES) -> str:
     normalized = str(header or "").strip()
-    for canonical, aliases in HEADER_ALIASES.items():
-        if normalized in aliases:
+    for canonical, choices in aliases.items():
+        if normalized in choices:
             return canonical
     return normalized
 

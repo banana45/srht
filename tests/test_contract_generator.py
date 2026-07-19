@@ -6,12 +6,18 @@ import pytest
 
 from contract_generator import (
     ContractRow,
+    StoreProofRow,
     format_chinese_date,
     generate_contract_archive,
     generate_contract,
+    generate_store_proof,
+    generate_store_proof_archive,
     normalize_row,
+    normalize_store_proof_row,
     parse_csv_rows,
+    parse_csv_store_proof_rows,
     parse_xlsx_rows,
+    parse_xlsx_store_proof_rows,
 )
 
 
@@ -254,6 +260,110 @@ def test_generate_contract_archive_creates_zip_for_multiple_rows(tmp_path):
     ]
 
     generate_contract_archive(template, output, rows)
+
+    with zipfile.ZipFile(output) as archive:
+        names = archive.namelist()
+    assert len(names) == 2
+    assert names[0].endswith(".docx")
+    assert names[1].endswith(".docx")
+
+
+def test_normalize_store_proof_row_formats_time():
+    row = normalize_store_proof_row(
+        {
+            "enterprise_name": "杭州测试科技有限公司",
+            "business_license": "91330000TEST000001",
+            "account_name": "测试旗舰店",
+            "shop_url": "https://example.com/shop",
+            "proof_date": "2026-7-19",
+        }
+    )
+
+    assert row == StoreProofRow(
+        enterprise_name="杭州测试科技有限公司",
+        business_license="91330000TEST000001",
+        account_name="测试旗舰店",
+        shop_url="https://example.com/shop",
+        proof_date="2026年7月19日",
+    )
+
+
+def test_parse_store_proof_csv_rows_reads_header_aliases():
+    csv_bytes = "企业名,营业执照,账户名称,店铺地址,时间\n杭州测试科技有限公司,91330000TEST000001,测试旗舰店,https://example.com/shop,2026-7-19\n".encode(
+        "utf-8-sig"
+    )
+
+    rows = parse_csv_store_proof_rows(BytesIO(csv_bytes))
+
+    assert rows == [
+        {
+            "enterprise_name": "杭州测试科技有限公司",
+            "business_license": "91330000TEST000001",
+            "account_name": "测试旗舰店",
+            "shop_url": "https://example.com/shop",
+            "proof_date": "2026-7-19",
+        }
+    ]
+
+
+def test_parse_store_proof_xlsx_rows_reads_header_aliases():
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["企业名", "营业执照", "账户名称", "店铺地址", "时间"])
+    sheet.append(["杭州测试科技有限公司", "91330000TEST000001", "测试旗舰店", "https://example.com/shop", "2026-7-19"])
+    data = BytesIO()
+    workbook.save(data)
+    data.seek(0)
+
+    rows = parse_xlsx_store_proof_rows(data)
+
+    assert rows == [
+        {
+            "enterprise_name": "杭州测试科技有限公司",
+            "business_license": "91330000TEST000001",
+            "account_name": "测试旗舰店",
+            "shop_url": "https://example.com/shop",
+            "proof_date": "2026-7-19",
+        }
+    ]
+
+
+def test_generate_store_proof_replaces_template_values(tmp_path):
+    template = Path("resource/奇点电商平台店铺经营证明模板.docx")
+    output = tmp_path / "proof.docx"
+    row = StoreProofRow(
+        enterprise_name="杭州测试科技有限公司",
+        business_license="91330000TEST000001",
+        account_name="测试旗舰店",
+        shop_url="https://example.com/shop",
+        proof_date="2026年7月19日",
+    )
+
+    generate_store_proof(template, output, row)
+
+    text = visible_document_text(output)
+    assert "杭州测试科技有限公司" in text
+    assert "91330000TEST000001" in text
+    assert "测试旗舰店" in text
+    assert "https://example.com/shop" in text
+    assert "2026年7月19日" in text
+    assert "厦门淑莱汝信息科技有限公司" not in text
+    assert "91350206MAKGH6NDXJ" not in text
+    assert "厦门淑莱汝网络设计" not in text
+    assert "https://xmslr.qidian.hzshengruikj.cn/" not in text
+
+
+def test_generate_store_proof_archive_creates_zip_for_multiple_rows(tmp_path):
+    template = Path("resource/奇点电商平台店铺经营证明模板.docx")
+    output = tmp_path / "proofs.zip"
+    rows = [
+        StoreProofRow("杭州测试科技有限公司", "91330000TEST000001", "测试旗舰店", "https://example.com/a", "2026年7月19日"),
+        StoreProofRow("上海样例网络有限公司", "91310000TEST000002", "样例店铺", "https://example.com/b", "2026年7月20日"),
+    ]
+
+    generate_store_proof_archive(template, output, rows)
 
     with zipfile.ZipFile(output) as archive:
         names = archive.namelist()

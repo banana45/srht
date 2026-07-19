@@ -14,14 +14,20 @@ from flask import Flask, jsonify, render_template, request, send_file
 from contract_generator import (
     generate_contract,
     generate_contract_archive,
+    generate_store_proof,
+    generate_store_proof_archive,
     normalize_row,
+    normalize_store_proof_row,
     parse_csv_rows,
+    parse_csv_store_proof_rows,
     parse_xlsx_rows,
+    parse_xlsx_store_proof_rows,
 )
 
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_PATH = BASE_DIR / "resource" / "奇点电商平台产品服务合同模板.docx"
+STORE_PROOF_TEMPLATE_PATH = BASE_DIR / "resource" / "奇点电商平台店铺经营证明模板.docx"
 OUTPUT_DIR = BASE_DIR / "output"
 
 app = Flask(__name__)
@@ -52,6 +58,22 @@ def import_rows():
         rows = parse_csv_rows(uploaded.stream)
     elif filename.endswith(".xlsx"):
         rows = parse_xlsx_rows(uploaded.stream)
+    else:
+        return jsonify({"error": "仅支持 .csv 和 .xlsx 文件"}), 400
+    return jsonify({"rows": rows})
+
+
+@app.post("/api/store-proof/import")
+def import_store_proof_rows():
+    uploaded = request.files.get("file")
+    if not uploaded or not uploaded.filename:
+        return jsonify({"error": "请选择 CSV 或 Excel 文件"}), 400
+
+    filename = uploaded.filename.lower()
+    if filename.endswith(".csv"):
+        rows = parse_csv_store_proof_rows(uploaded.stream)
+    elif filename.endswith(".xlsx"):
+        rows = parse_xlsx_store_proof_rows(uploaded.stream)
     else:
         return jsonify({"error": "仅支持 .csv 和 .xlsx 文件"}), 400
     return jsonify({"rows": rows})
@@ -90,7 +112,45 @@ def generate():
             "error": "",
         },
     )
-    thread = threading.Thread(target=_run_generation_job, args=(job_id, normalized), daemon=True)
+    thread = threading.Thread(target=_run_generation_job, args=(job_id, normalized, "contract"), daemon=True)
+    thread.start()
+    return jsonify(_public_job(job_id))
+
+
+@app.post("/api/store-proof/generate")
+def generate_store_proof_route():
+    payload = request.get_json(silent=True) or {}
+    raw_rows = payload.get("rows") or []
+    normalized = []
+    errors = []
+
+    for index, raw_row in enumerate(raw_rows, start=1):
+        try:
+            normalized.append(normalize_store_proof_row(raw_row))
+        except ValueError as exc:
+            errors.append({"row": index, "error": str(exc)})
+
+    if errors:
+        return jsonify({"errors": errors}), 400
+    if not normalized:
+        return jsonify({"errors": [{"row": 0, "error": "请至少添加一行经营证明数据"}]}), 400
+
+    job_id = uuid.uuid4().hex
+    _set_job(
+        job_id,
+        {
+            "job_id": job_id,
+            "status": "running",
+            "total": len(normalized),
+            "current_index": 1,
+            "total_percent": 0,
+            "current_percent": 0,
+            "message": "准备生成经营证明",
+            "download_url": "",
+            "error": "",
+        },
+    )
+    thread = threading.Thread(target=_run_generation_job, args=(job_id, normalized, "store_proof"), daemon=True)
     thread.start()
     return jsonify(_public_job(job_id))
 
@@ -122,12 +182,12 @@ def _safe_download_name(value: str) -> str:
     return "".join("_" if char in '\\/:*?"<>|' else char for char in value).strip() or "contract"
 
 
-def _run_generation_job(job_id: str, rows) -> None:
+def _run_generation_job(job_id: str, rows, kind: str) -> None:
     try:
         OUTPUT_DIR.mkdir(exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         total = len(rows)
-        if total == 1:
+        if kind == "contract" and total == 1:
             output_path = OUTPUT_DIR / f"{_safe_download_name(rows[0].party_a)}-{stamp}.docx"
 
             def on_progress(percent: int, message: str) -> None:
@@ -142,7 +202,7 @@ def _run_generation_job(job_id: str, rows) -> None:
                 )
 
             generate_contract(TEMPLATE_PATH, output_path, rows[0], progress=on_progress)
-        else:
+        elif kind == "contract":
             output_path = OUTPUT_DIR / f"contracts-{stamp}.zip"
 
             def on_archive_progress(row_index: int, current_percent: int, message: str) -> None:
@@ -158,6 +218,42 @@ def _run_generation_job(job_id: str, rows) -> None:
                 )
 
             generate_contract_archive(TEMPLATE_PATH, output_path, rows, progress=on_archive_progress)
+        elif total == 1:
+            output_path = OUTPUT_DIR / f"{_safe_download_name(rows[0].enterprise_name)}-店铺经营证明-{stamp}.docx"
+
+            def on_store_proof_progress(percent: int, message: str) -> None:
+                _set_job(
+                    job_id,
+                    {
+                        "current_index": 1,
+                        "current_percent": percent,
+                        "total_percent": percent,
+                        "message": message,
+                    },
+                )
+
+            generate_store_proof(STORE_PROOF_TEMPLATE_PATH, output_path, rows[0], progress=on_store_proof_progress)
+        else:
+            output_path = OUTPUT_DIR / f"store-proofs-{stamp}.zip"
+
+            def on_store_proof_archive_progress(row_index: int, current_percent: int, message: str) -> None:
+                total_percent = int((((row_index - 1) + current_percent / 100) / total) * 100)
+                _set_job(
+                    job_id,
+                    {
+                        "current_index": row_index,
+                        "current_percent": current_percent,
+                        "total_percent": total_percent,
+                        "message": message,
+                    },
+                )
+
+            generate_store_proof_archive(
+                STORE_PROOF_TEMPLATE_PATH,
+                output_path,
+                rows,
+                progress=on_store_proof_archive_progress,
+            )
 
         _set_job(
             job_id,

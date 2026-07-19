@@ -1,29 +1,83 @@
 const rowsBody = document.querySelector("#rowsBody");
+const headerRow = document.querySelector("#headerRow");
 const addRowBtn = document.querySelector("#addRowBtn");
 const generateBtn = document.querySelector("#generateBtn");
 const fileInput = document.querySelector("#fileInput");
 const message = document.querySelector("#message");
+const notice = document.querySelector("#notice");
 const progressPanel = document.querySelector("#progressPanel");
 const totalProgress = document.querySelector("#totalProgress");
 const currentProgress = document.querySelector("#currentProgress");
 const totalProgressText = document.querySelector("#totalProgressText");
 const currentProgressText = document.querySelector("#currentProgressText");
+const currentProgressLabel = document.querySelector("#currentProgressLabel");
 const progressDetail = document.querySelector("#progressDetail");
+const tabButtons = Array.from(document.querySelectorAll(".tab"));
 
-const emptyRow = {
-  party_a: "",
-  start_date: "",
-  end_date: "",
-  signing_date: "",
+const modes = {
+  contract: {
+    label: "产品服务合同",
+    itemLabel: "当前合同",
+    importUrl: "/api/import",
+    generateUrl: "/api/generate",
+    emptyStatus: "甲方必填，开始日期必填，结束日期必填",
+    notice: "日期格式：2026-7-1、2026/7/1 或 2026年7月1日。签署日期可留空。",
+    fields: [
+      { key: "party_a", label: "甲方名称", placeholder: "例如：杭州测试科技有限公司", required: true, message: "甲方必填" },
+      { key: "start_date", label: "开始日期", placeholder: "例如：2026-7-1", required: true, message: "开始日期必填" },
+      { key: "end_date", label: "结束日期", placeholder: "例如：2027-7-1", required: true, message: "结束日期必填" },
+      { key: "signing_date", label: "签署日期", placeholder: "可留空，例如：2026-7-2", required: false },
+    ],
+  },
+  storeProof: {
+    label: "店铺经营证明",
+    itemLabel: "当前证明",
+    importUrl: "/api/store-proof/import",
+    generateUrl: "/api/store-proof/generate",
+    emptyStatus: "企业名、营业执照、账户名称、店铺地址、时间均必填",
+    notice: "时间格式：2026-7-19、2026/7/19 或 2026年7月19日。支持导入 Excel/CSV。",
+    fields: [
+      { key: "enterprise_name", label: "企业名", placeholder: "例如：杭州测试科技有限公司", required: true, message: "企业名必填" },
+      { key: "business_license", label: "营业执照", placeholder: "例如：91330000TEST000001", required: true, message: "营业执照必填" },
+      { key: "account_name", label: "账户名称", placeholder: "例如：测试旗舰店", required: true, message: "账户名称必填" },
+      { key: "shop_url", label: "店铺地址", placeholder: "例如：https://example.com/shop", required: true, message: "店铺地址必填" },
+      { key: "proof_date", label: "时间", placeholder: "例如：2026-7-19", required: true, message: "时间必填" },
+    ],
+  },
 };
 
-function addRow(data = emptyRow) {
+let activeMode = "contract";
+const modeRows = {
+  contract: [],
+  storeProof: [],
+};
+
+function config() {
+  return modes[activeMode];
+}
+
+function emptyRow() {
+  return Object.fromEntries(config().fields.map((field) => [field.key, ""]));
+}
+
+function saveActiveRows() {
+  modeRows[activeMode] = allRows();
+}
+
+function renderHeader() {
+  headerRow.innerHTML = config().fields.map((field) => `<th>${field.label}</th>`).join("") + "<th>状态</th><th></th>";
+}
+
+function addRow(data = emptyRow()) {
   const tr = document.createElement("tr");
+  const inputs = config().fields
+    .map(
+      (field) =>
+        `<td><input type="text" data-field="${field.key}" placeholder="${field.placeholder}"></td>`
+    )
+    .join("");
   tr.innerHTML = `
-    <td><input type="text" data-field="party_a" placeholder="例如：杭州测试科技有限公司"></td>
-    <td><input type="text" data-field="start_date" placeholder="例如：2026-7-1"></td>
-    <td><input type="text" data-field="end_date" placeholder="例如：2027-7-1"></td>
-    <td><input type="text" data-field="signing_date" placeholder="可留空，例如：2026-7-2"></td>
+    ${inputs}
     <td class="status">待填写</td>
     <td><button type="button" class="remove" title="删除行">×</button></td>
   `;
@@ -40,6 +94,23 @@ function addRow(data = emptyRow) {
   validateRow(tr);
 }
 
+function renderRows() {
+  rowsBody.innerHTML = "";
+  const rows = modeRows[activeMode].length ? modeRows[activeMode] : [emptyRow()];
+  rows.forEach((row) => addRow(row));
+}
+
+function renderMode() {
+  renderHeader();
+  renderRows();
+  notice.textContent = config().notice;
+  currentProgressLabel.textContent = config().itemLabel;
+  generateBtn.textContent = `生成${config().label}`;
+  progressPanel.hidden = true;
+  setMessage("");
+  tabButtons.forEach((button) => button.classList.toggle("active", button.dataset.mode === activeMode));
+}
+
 function rowData(tr) {
   const data = {};
   tr.querySelectorAll("input").forEach((input) => {
@@ -50,10 +121,9 @@ function rowData(tr) {
 
 function validateRow(tr) {
   const data = rowData(tr);
-  const errors = [];
-  if (!data.party_a) errors.push("甲方必填");
-  if (!data.start_date) errors.push("开始日期必填");
-  if (!data.end_date) errors.push("结束日期必填");
+  const errors = config().fields
+    .filter((field) => field.required && !data[field.key])
+    .map((field) => field.message);
   const status = tr.querySelector(".status");
   status.textContent = errors.length ? errors.join("，") : "可生成";
   status.classList.toggle("error", errors.length > 0);
@@ -72,6 +142,7 @@ function setGenerating(isGenerating) {
   generateBtn.disabled = isGenerating;
   addRowBtn.disabled = isGenerating;
   fileInput.disabled = isGenerating;
+  tabButtons.forEach((button) => (button.disabled = isGenerating));
 }
 
 function showProgress(job) {
@@ -104,7 +175,7 @@ async function pollJob(jobId) {
     showProgress(job);
 
     if (job.status === "complete") {
-      setMessage("合同已生成，正在下载。");
+      setMessage(`${config().label}已生成，正在下载。`);
       downloadFrom(job.download_url);
       return;
     }
@@ -115,6 +186,15 @@ async function pollJob(jobId) {
   }
 }
 
+tabButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    if (button.dataset.mode === activeMode) return;
+    saveActiveRows();
+    activeMode = button.dataset.mode;
+    renderMode();
+  });
+});
+
 addRowBtn.addEventListener("click", () => addRow());
 
 fileInput.addEventListener("change", async () => {
@@ -123,7 +203,7 @@ fileInput.addEventListener("change", async () => {
   const body = new FormData();
   body.append("file", file);
   setMessage("正在导入文件...");
-  const response = await fetch("/api/import", { method: "POST", body });
+  const response = await fetch(config().importUrl, { method: "POST", body });
   const result = await response.json();
   if (!response.ok) {
     setMessage(result.error || "导入失败", true);
@@ -138,11 +218,11 @@ fileInput.addEventListener("change", async () => {
 
 generateBtn.addEventListener("click", async () => {
   setGenerating(true);
-  setMessage("正在生成合同...");
+  setMessage(`正在生成${config().label}...`);
   progressPanel.hidden = false;
   showProgress({ total_percent: 0, current_percent: 0, current_index: 1, total: allRows().length, message: "提交任务" });
   try {
-    const response = await fetch("/api/generate", {
+    const response = await fetch(config().generateUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ rows: allRows() }),
@@ -163,4 +243,4 @@ generateBtn.addEventListener("click", async () => {
   }
 });
 
-addRow();
+renderMode();

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>合同批量生成工具</title>
+    <title>文档批量生成工具</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
   </head>
   <body>
@@ -11,7 +11,7 @@
       <header class="topbar">
         <div>
           <h1>合同批量生成工具</h1>
-          <p>填写甲方和合同日期，生成保持原下划线样式的 Word 合同。</p>
+          <p>填写数据，批量生成合同或店铺经营证明 Word 文件。</p>
         </div>
         <div class="actions">
           <label class="file-button">
@@ -19,25 +19,21 @@
             <input id="fileInput" type="file" accept=".xlsx,.csv">
           </label>
           <button id="addRowBtn" type="button">添加行</button>
-          <button id="generateBtn" type="button" class="primary">生成合同</button>
+          <button id="generateBtn" type="button" class="primary">生成文件</button>
         </div>
       </header>
 
-      <section class="notice">
-        日期格式：2026-7-1、2026/7/1 或 2026年7月1日。签署日期可留空。
-      </section>
+      <nav class="tabs" aria-label="功能页签">
+        <button class="tab active" type="button" data-mode="contract">产品服务合同</button>
+        <button class="tab" type="button" data-mode="storeProof">店铺经营证明</button>
+      </nav>
 
-      <section class="table-wrap" aria-label="合同数据">
+      <section id="notice" class="notice"></section>
+
+      <section class="table-wrap" aria-label="批量数据">
         <table>
           <thead>
-            <tr>
-              <th>甲方名称</th>
-              <th>开始日期</th>
-              <th>结束日期</th>
-              <th>签署日期</th>
-              <th>状态</th>
-              <th></th>
-            </tr>
+            <tr id="headerRow"></tr>
           </thead>
           <tbody id="rowsBody"></tbody>
         </table>
@@ -53,7 +49,7 @@
         </div>
         <div class="progress-row">
           <div>
-            <strong>当前合同</strong>
+            <strong id="currentProgressLabel">当前文件</strong>
             <span id="currentProgressText">0%</span>
           </div>
           <progress id="currentProgress" value="0" max="100"></progress>

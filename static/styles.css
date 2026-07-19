@@ -51,6 +51,28 @@ p {
   justify-content: flex-end;
 }
 
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 4px;
+}
+
+.tab.active {
+  border-bottom-color: var(--accent);
+  color: var(--ink);
+  font-weight: 650;
+}
+
 button,
 .file-button {
   height: 38px;
@@ -95,7 +117,7 @@ button,
 
 table {
   width: 100%;
-  min-width: 920px;
+  min-width: 1080px;
   border-collapse: collapse;
 }
 
