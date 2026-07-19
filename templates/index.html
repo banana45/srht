@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>合同批量生成工具</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>合同批量生成工具</h1>
+          <p>填写甲方和合同日期，生成保持原下划线样式的 Word 合同。</p>
+        </div>
+        <div class="actions">
+          <label class="file-button">
+            导入 Excel/CSV
+            <input id="fileInput" type="file" accept=".xlsx,.csv">
+          </label>
+          <button id="addRowBtn" type="button">添加行</button>
+          <button id="generateBtn" type="button" class="primary">生成合同</button>
+        </div>
+      </header>
+
+      <section class="notice">
+        日期格式：2026-7-1、2026/7/1 或 2026年7月1日。签署日期可留空。
+      </section>
+
+      <section class="table-wrap" aria-label="合同数据">
+        <table>
+          <thead>
+            <tr>
+              <th>甲方名称</th>
+              <th>开始日期</th>
+              <th>结束日期</th>
+              <th>签署日期</th>
+              <th>状态</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="rowsBody"></tbody>
+        </table>
+      </section>
+
+      <section id="progressPanel" class="progress-panel" hidden>
+        <div class="progress-row">
+          <div>
+            <strong>总进度</strong>
+            <span id="totalProgressText">0%</span>
+          </div>
+          <progress id="totalProgress" value="0" max="100"></progress>
+        </div>
+        <div class="progress-row">
+          <div>
+            <strong>当前合同</strong>
+            <span id="currentProgressText">0%</span>
+          </div>
+          <progress id="currentProgress" value="0" max="100"></progress>
+        </div>
+        <div id="progressDetail" class="progress-detail"></div>
+      </section>
+
+      <div id="message" class="message" role="status"></div>
+    </main>
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>
