@@ -44,12 +44,25 @@ const modes = {
       { key: "proof_date", label: "时间", placeholder: "例如：2026-7-19", required: true, message: "时间必填" },
     ],
   },
+  authorizationLetter: {
+    label: "授权函",
+    itemLabel: "当前授权函",
+    importUrl: "/api/authorization-letter/import",
+    generateUrl: "/api/authorization-letter/generate",
+    emptyStatus: "企业名、时间均必填",
+    notice: "时间格式：2026-7-19、2026/7/19 或 2026年7月19日。企业名将填入授权函正文下划线处，并去掉下划线。",
+    fields: [
+      { key: "enterprise_name", label: "企业名", placeholder: "例如：杭州测试科技有限公司", required: true, message: "企业名必填" },
+      { key: "authorization_date", label: "时间", placeholder: "例如：2026-7-19", required: true, message: "时间必填" },
+    ],
+  },
 };
 
 let activeMode = "contract";
 const modeRows = {
   contract: [],
   storeProof: [],
+  authorizationLetter: [],
 };
 
 function config() {

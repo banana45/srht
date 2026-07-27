@@ -5,17 +5,23 @@ import zipfile
 import pytest
 
 from contract_generator import (
+    AuthorizationLetterRow,
     ContractRow,
     StoreProofRow,
     format_chinese_date,
+    generate_authorization_letter,
+    generate_authorization_letter_archive,
     generate_contract_archive,
     generate_contract,
     generate_store_proof,
     generate_store_proof_archive,
+    normalize_authorization_letter_row,
     normalize_row,
     normalize_store_proof_row,
+    parse_csv_authorization_letter_rows,
     parse_csv_rows,
     parse_csv_store_proof_rows,
+    parse_xlsx_authorization_letter_rows,
     parse_xlsx_rows,
     parse_xlsx_store_proof_rows,
 )
@@ -364,6 +370,101 @@ def test_generate_store_proof_archive_creates_zip_for_multiple_rows(tmp_path):
     ]
 
     generate_store_proof_archive(template, output, rows)
+
+    with zipfile.ZipFile(output) as archive:
+        names = archive.namelist()
+    assert len(names) == 2
+    assert names[0].endswith(".docx")
+    assert names[1].endswith(".docx")
+
+
+def test_normalize_authorization_letter_row_formats_time():
+    row = normalize_authorization_letter_row(
+        {
+            "enterprise_name": "杭州测试科技有限公司",
+            "authorization_date": "2026-7-19",
+        }
+    )
+
+    assert row == AuthorizationLetterRow(
+        enterprise_name="杭州测试科技有限公司",
+        authorization_date="2026年7月19日",
+    )
+
+
+def test_parse_authorization_letter_csv_rows_reads_header_aliases():
+    csv_bytes = "企业名,时间\n杭州测试科技有限公司,2026-7-19\n".encode("utf-8-sig")
+
+    rows = parse_csv_authorization_letter_rows(BytesIO(csv_bytes))
+
+    assert rows == [
+        {
+            "enterprise_name": "杭州测试科技有限公司",
+            "authorization_date": "2026-7-19",
+        }
+    ]
+
+
+def test_parse_authorization_letter_xlsx_rows_reads_header_aliases():
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["企业名", "时间"])
+    sheet.append(["杭州测试科技有限公司", "2026-7-19"])
+    data = BytesIO()
+    workbook.save(data)
+    data.seek(0)
+
+    rows = parse_xlsx_authorization_letter_rows(data)
+
+    assert rows == [
+        {
+            "enterprise_name": "杭州测试科技有限公司",
+            "authorization_date": "2026-7-19",
+        }
+    ]
+
+
+def test_generate_authorization_letter_fills_enterprise_and_authorizer_date(tmp_path):
+    template = Path("resource/奇点电商平台授权函模板.docx")
+    output = tmp_path / "letter.docx"
+    row = AuthorizationLetterRow(
+        enterprise_name="上海样例网络有限公司",
+        authorization_date="2026年7月19日",
+    )
+
+    generate_authorization_letter(template, output, row)
+
+    text = visible_document_text(output)
+    assert "现授权人依法授权上海样例网络有限公司（下称" in text
+    assert text.count("时间：2026年7月19日") == 1
+    assert "被授权人（盖章）：      时间：      " in text
+
+
+def test_generate_authorization_letter_removes_underlines_from_enterprise_slot(tmp_path):
+    template = Path("resource/奇点电商平台授权函模板.docx")
+    output = tmp_path / "letter.docx"
+    row = AuthorizationLetterRow(
+        enterprise_name="上海样例网络有限公司",
+        authorization_date="2026年7月19日",
+    )
+
+    generate_authorization_letter(template, output, row)
+
+    paragraph = paragraphs_containing(output, "上海样例网络有限公司")[0]
+    assert "<w:u" not in paragraph
+
+
+def test_generate_authorization_letter_archive_creates_zip_for_multiple_rows(tmp_path):
+    template = Path("resource/奇点电商平台授权函模板.docx")
+    output = tmp_path / "letters.zip"
+    rows = [
+        AuthorizationLetterRow("杭州测试科技有限公司", "2026年7月19日"),
+        AuthorizationLetterRow("上海样例网络有限公司", "2026年7月20日"),
+    ]
+
+    generate_authorization_letter_archive(template, output, rows)
 
     with zipfile.ZipFile(output) as archive:
         names = archive.namelist()

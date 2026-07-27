@@ -28,6 +28,12 @@ class StoreProofRow:
     proof_date: str
 
 
+@dataclass(frozen=True)
+class AuthorizationLetterRow:
+    enterprise_name: str
+    authorization_date: str
+
+
 HEADER_ALIASES = {
     "party_a": {"party_a", "甲方", "甲方名称", "甲方名字", "客户名称"},
     "start_date": {"start_date", "开始日期", "合同开始日期", "起始日期"},
@@ -49,6 +55,11 @@ STORE_PROOF_TEMPLATE_VALUES = {
     "account_name": "厦门淑莱汝网络设计",
     "shop_url": "https://xmslr.qidian.hzshengruikj.cn/",
     "proof_date": "2026年7月19日",
+}
+
+AUTHORIZATION_LETTER_HEADER_ALIASES = {
+    "enterprise_name": {"enterprise_name", "企业名", "企业名称", "公司名称", "被授权人"},
+    "authorization_date": {"authorization_date", "时间", "日期", "授权时间", "授权日期"},
 }
 
 
@@ -114,6 +125,21 @@ def normalize_store_proof_row(raw: dict[str, object]) -> StoreProofRow:
     )
 
 
+def normalize_authorization_letter_row(raw: dict[str, object]) -> AuthorizationLetterRow:
+    enterprise_name = str(raw.get("enterprise_name", "") or "").strip()
+    authorization_date = str(raw.get("authorization_date", "") or "").strip()
+
+    if not enterprise_name:
+        raise ValueError("企业名不能为空")
+    if not authorization_date:
+        raise ValueError("时间不能为空")
+
+    return AuthorizationLetterRow(
+        enterprise_name=enterprise_name,
+        authorization_date=format_chinese_date(authorization_date),
+    )
+
+
 def parse_csv_rows(file_obj: BinaryIO) -> list[dict[str, str]]:
     content = file_obj.read()
     text = content.decode("utf-8-sig") if isinstance(content, bytes) else content
@@ -138,6 +164,12 @@ def parse_csv_store_proof_rows(file_obj: BinaryIO) -> list[dict[str, str]]:
     content = file_obj.read()
     text = content.decode("utf-8-sig") if isinstance(content, bytes) else content
     return _parse_csv_text(text, STORE_PROOF_HEADER_ALIASES, _store_proof_keys())
+
+
+def parse_csv_authorization_letter_rows(file_obj: BinaryIO) -> list[dict[str, str]]:
+    content = file_obj.read()
+    text = content.decode("utf-8-sig") if isinstance(content, bytes) else content
+    return _parse_csv_text(text, AUTHORIZATION_LETTER_HEADER_ALIASES, _authorization_letter_keys())
 
 
 def parse_xlsx_rows(file_obj: BinaryIO) -> list[dict[str, str]]:
@@ -169,6 +201,10 @@ def parse_xlsx_rows(file_obj: BinaryIO) -> list[dict[str, str]]:
 
 def parse_xlsx_store_proof_rows(file_obj: BinaryIO) -> list[dict[str, str]]:
     return _parse_xlsx_rows(file_obj, STORE_PROOF_HEADER_ALIASES, _store_proof_keys())
+
+
+def parse_xlsx_authorization_letter_rows(file_obj: BinaryIO) -> list[dict[str, str]]:
+    return _parse_xlsx_rows(file_obj, AUTHORIZATION_LETTER_HEADER_ALIASES, _authorization_letter_keys())
 
 
 def generate_contract(
@@ -291,6 +327,62 @@ def generate_store_proof_archive(
                 archive.write(path, path.name)
 
 
+def generate_authorization_letter(
+    template_path: Path,
+    output_path: Path,
+    row: AuthorizationLetterRow,
+    progress: Callable[[int, str], None] | None = None,
+) -> None:
+    template_path = Path(template_path)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _emit(progress, 5, "读取模板")
+
+    with zipfile.ZipFile(template_path, "r") as source, zipfile.ZipFile(
+        output_path, "w", zipfile.ZIP_DEFLATED
+    ) as target:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            if item.filename == "word/document.xml":
+                _emit(progress, 35, "填充授权函内容")
+                xml = data.decode("utf-8")
+                data = _fill_authorization_letter_xml(xml, row).encode("utf-8")
+            target.writestr(item, data)
+
+    _emit(progress, 100, "完成")
+
+
+def generate_authorization_letter_archive(
+    template_path: Path,
+    output_path: Path,
+    rows: list[AuthorizationLetterRow],
+    progress: Callable[[int, int, str], None] | None = None,
+) -> None:
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        generated_paths: list[Path] = []
+        total = len(rows)
+        for index, row in enumerate(rows, start=1):
+            safe_name = _safe_filename(row.enterprise_name) or f"authorization-letter-{index}"
+            target = tmp_path / f"{index:03d}-{safe_name}-授权函.docx"
+
+            def on_letter_progress(percent: int, message: str, row_index: int = index) -> None:
+                if progress:
+                    progress(row_index, percent, message)
+
+            generate_authorization_letter(template_path, target, row, progress=on_letter_progress)
+            generated_paths.append(target)
+            if progress:
+                progress(index, 100, f"已完成 {index}/{total}")
+
+        with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for path in generated_paths:
+                archive.write(path, path.name)
+
+
 def _fill_document_xml(xml: str, row: ContractRow) -> str:
     def replace_paragraph(match: re.Match[str]) -> str:
         paragraph = match.group(0)
@@ -304,6 +396,31 @@ def _fill_document_xml(xml: str, row: ContractRow) -> str:
 
         if row.signing_date and "日期：" in text and "_______________" in text:
             return _replace_after_label(paragraph, "日期：", row.signing_date)
+
+        return paragraph
+
+    return re.sub(r"<w:p[\s\S]*?</w:p>", replace_paragraph, xml)
+
+
+def _fill_authorization_letter_xml(xml: str, row: AuthorizationLetterRow) -> str:
+    fill_next_authorizer_date = False
+
+    def replace_paragraph(match: re.Match[str]) -> str:
+        nonlocal fill_next_authorizer_date
+        paragraph = match.group(0)
+        text = _paragraph_text(paragraph)
+
+        if "现授权人依法授权" in text and "（下称" in text:
+            paragraph = _replace_between_labels(paragraph, "现授权人依法授权", "（下称", row.enterprise_name)
+            return _strip_underlines(paragraph)
+
+        if text.strip().startswith("授权人（盖章）"):
+            fill_next_authorizer_date = True
+            return paragraph
+
+        if fill_next_authorizer_date and "时间：" in text:
+            fill_next_authorizer_date = False
+            return _replace_after_label_whitespace(paragraph, "时间：", row.authorization_date)
 
         return paragraph
 
@@ -325,6 +442,31 @@ def _replace_after_label(paragraph: str, label: str, replacement: str) -> str:
         blank_end += 1
     paragraph = _replace_text_range(paragraph, blank_start, blank_end, replacement, underline=False)
     return _strip_underlines(paragraph)
+
+
+def _replace_after_label_whitespace(paragraph: str, label: str, replacement: str) -> str:
+    text = _paragraph_text(paragraph)
+    start = text.find(label)
+    if start == -1:
+        return paragraph
+
+    value_start = start + len(label)
+    value_end = value_start
+    while value_end < len(text) and text[value_end].isspace():
+        value_end += 1
+    return _replace_text_range(paragraph, value_start, value_end, replacement, underline=False)
+
+
+def _replace_between_labels(paragraph: str, start_label: str, end_label: str, replacement: str) -> str:
+    text = _paragraph_text(paragraph)
+    start_label_pos = text.find(start_label)
+    if start_label_pos == -1:
+        return paragraph
+    start = start_label_pos + len(start_label)
+    end = text.find(end_label, start)
+    if end == -1:
+        return paragraph
+    return _replace_text_range(paragraph, start, end, replacement, underline=False)
 
 
 def _replace_contract_term(paragraph: str, start_date: str, end_date: str) -> str:
@@ -507,6 +649,10 @@ def _parse_xlsx_rows(
 
 def _store_proof_keys() -> tuple[str, ...]:
     return ("enterprise_name", "business_license", "account_name", "shop_url", "proof_date")
+
+
+def _authorization_letter_keys() -> tuple[str, ...]:
+    return ("enterprise_name", "authorization_date")
 
 
 def _canonical_header(header: str | None, aliases: dict[str, set[str]] = HEADER_ALIASES) -> str:

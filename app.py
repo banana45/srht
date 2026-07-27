@@ -12,14 +12,19 @@ from pathlib import Path
 from flask import Flask, jsonify, render_template, request, send_file
 
 from contract_generator import (
+    generate_authorization_letter,
+    generate_authorization_letter_archive,
     generate_contract,
     generate_contract_archive,
     generate_store_proof,
     generate_store_proof_archive,
+    normalize_authorization_letter_row,
     normalize_row,
     normalize_store_proof_row,
+    parse_csv_authorization_letter_rows,
     parse_csv_rows,
     parse_csv_store_proof_rows,
+    parse_xlsx_authorization_letter_rows,
     parse_xlsx_rows,
     parse_xlsx_store_proof_rows,
 )
@@ -28,6 +33,7 @@ from contract_generator import (
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATE_PATH = BASE_DIR / "resource" / "奇点电商平台产品服务合同模板.docx"
 STORE_PROOF_TEMPLATE_PATH = BASE_DIR / "resource" / "奇点电商平台店铺经营证明模板.docx"
+AUTHORIZATION_LETTER_TEMPLATE_PATH = BASE_DIR / "resource" / "奇点电商平台授权函模板.docx"
 OUTPUT_DIR = BASE_DIR / "output"
 
 app = Flask(__name__)
@@ -74,6 +80,22 @@ def import_store_proof_rows():
         rows = parse_csv_store_proof_rows(uploaded.stream)
     elif filename.endswith(".xlsx"):
         rows = parse_xlsx_store_proof_rows(uploaded.stream)
+    else:
+        return jsonify({"error": "仅支持 .csv 和 .xlsx 文件"}), 400
+    return jsonify({"rows": rows})
+
+
+@app.post("/api/authorization-letter/import")
+def import_authorization_letter_rows():
+    uploaded = request.files.get("file")
+    if not uploaded or not uploaded.filename:
+        return jsonify({"error": "请选择 CSV 或 Excel 文件"}), 400
+
+    filename = uploaded.filename.lower()
+    if filename.endswith(".csv"):
+        rows = parse_csv_authorization_letter_rows(uploaded.stream)
+    elif filename.endswith(".xlsx"):
+        rows = parse_xlsx_authorization_letter_rows(uploaded.stream)
     else:
         return jsonify({"error": "仅支持 .csv 和 .xlsx 文件"}), 400
     return jsonify({"rows": rows})
@@ -155,6 +177,44 @@ def generate_store_proof_route():
     return jsonify(_public_job(job_id))
 
 
+@app.post("/api/authorization-letter/generate")
+def generate_authorization_letter_route():
+    payload = request.get_json(silent=True) or {}
+    raw_rows = payload.get("rows") or []
+    normalized = []
+    errors = []
+
+    for index, raw_row in enumerate(raw_rows, start=1):
+        try:
+            normalized.append(normalize_authorization_letter_row(raw_row))
+        except ValueError as exc:
+            errors.append({"row": index, "error": str(exc)})
+
+    if errors:
+        return jsonify({"errors": errors}), 400
+    if not normalized:
+        return jsonify({"errors": [{"row": 0, "error": "请至少添加一行授权函数据"}]}), 400
+
+    job_id = uuid.uuid4().hex
+    _set_job(
+        job_id,
+        {
+            "job_id": job_id,
+            "status": "running",
+            "total": len(normalized),
+            "current_index": 1,
+            "total_percent": 0,
+            "current_percent": 0,
+            "message": "准备生成授权函",
+            "download_url": "",
+            "error": "",
+        },
+    )
+    thread = threading.Thread(target=_run_generation_job, args=(job_id, normalized, "authorization_letter"), daemon=True)
+    thread.start()
+    return jsonify(_public_job(job_id))
+
+
 @app.get("/api/jobs/<job_id>")
 def job_status(job_id: str):
     job = _public_job(job_id)
@@ -218,7 +278,7 @@ def _run_generation_job(job_id: str, rows, kind: str) -> None:
                 )
 
             generate_contract_archive(TEMPLATE_PATH, output_path, rows, progress=on_archive_progress)
-        elif total == 1:
+        elif kind == "store_proof" and total == 1:
             output_path = OUTPUT_DIR / f"{_safe_download_name(rows[0].enterprise_name)}-店铺经营证明-{stamp}.docx"
 
             def on_store_proof_progress(percent: int, message: str) -> None:
@@ -233,7 +293,7 @@ def _run_generation_job(job_id: str, rows, kind: str) -> None:
                 )
 
             generate_store_proof(STORE_PROOF_TEMPLATE_PATH, output_path, rows[0], progress=on_store_proof_progress)
-        else:
+        elif kind == "store_proof":
             output_path = OUTPUT_DIR / f"store-proofs-{stamp}.zip"
 
             def on_store_proof_archive_progress(row_index: int, current_percent: int, message: str) -> None:
@@ -253,6 +313,47 @@ def _run_generation_job(job_id: str, rows, kind: str) -> None:
                 output_path,
                 rows,
                 progress=on_store_proof_archive_progress,
+            )
+        elif kind == "authorization_letter" and total == 1:
+            output_path = OUTPUT_DIR / f"{_safe_download_name(rows[0].enterprise_name)}-授权函-{stamp}.docx"
+
+            def on_authorization_letter_progress(percent: int, message: str) -> None:
+                _set_job(
+                    job_id,
+                    {
+                        "current_index": 1,
+                        "current_percent": percent,
+                        "total_percent": percent,
+                        "message": message,
+                    },
+                )
+
+            generate_authorization_letter(
+                AUTHORIZATION_LETTER_TEMPLATE_PATH,
+                output_path,
+                rows[0],
+                progress=on_authorization_letter_progress,
+            )
+        elif kind == "authorization_letter":
+            output_path = OUTPUT_DIR / f"authorization-letters-{stamp}.zip"
+
+            def on_authorization_letter_archive_progress(row_index: int, current_percent: int, message: str) -> None:
+                total_percent = int((((row_index - 1) + current_percent / 100) / total) * 100)
+                _set_job(
+                    job_id,
+                    {
+                        "current_index": row_index,
+                        "current_percent": current_percent,
+                        "total_percent": total_percent,
+                        "message": message,
+                    },
+                )
+
+            generate_authorization_letter_archive(
+                AUTHORIZATION_LETTER_TEMPLATE_PATH,
+                output_path,
+                rows,
+                progress=on_authorization_letter_archive_progress,
             )
 
         _set_job(

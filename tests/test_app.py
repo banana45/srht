@@ -36,6 +36,20 @@ def test_import_store_proof_csv_returns_rows():
     assert response.json["rows"][0]["enterprise_name"] == "杭州测试科技有限公司"
 
 
+def test_import_authorization_letter_csv_returns_rows():
+    client = app.test_client()
+    csv_data = "企业名,时间\n杭州测试科技有限公司,2026-7-19\n".encode("utf-8-sig")
+
+    response = client.post(
+        "/api/authorization-letter/import",
+        data={"file": (BytesIO(csv_data), "letters.csv")},
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    assert response.json["rows"][0]["enterprise_name"] == "杭州测试科技有限公司"
+
+
 def test_generate_rejects_invalid_rows():
     client = app.test_client()
 
@@ -118,6 +132,43 @@ def test_store_proof_generate_returns_job_and_download_for_valid_rows():
                     "account_name": "测试旗舰店",
                     "shop_url": "https://example.com/shop",
                     "proof_date": "2026-7-19",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json["job_id"]
+    assert response.json["status"] == "running"
+
+    job_id = response.json["job_id"]
+    status = None
+    for _ in range(30):
+        status_response = client.get(f"/api/jobs/{job_id}")
+        assert status_response.status_code == 200
+        status = status_response.json
+        if status["status"] == "complete":
+            break
+        time.sleep(0.1)
+
+    assert status["status"] == "complete"
+    assert status["total_percent"] == 100
+
+    download = client.get(f"/api/jobs/{job_id}/download")
+    assert download.status_code == 200
+    assert download.mimetype == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def test_authorization_letter_generate_returns_job_and_download_for_valid_rows():
+    client = app.test_client()
+
+    response = client.post(
+        "/api/authorization-letter/generate",
+        json={
+            "rows": [
+                {
+                    "enterprise_name": "杭州测试科技有限公司",
+                    "authorization_date": "2026-7-19",
                 }
             ]
         },
