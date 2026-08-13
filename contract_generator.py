@@ -290,7 +290,8 @@ def generate_store_proof(
             if item.filename == "word/document.xml":
                 _emit(progress, 35, "填充经营证明内容")
                 xml = data.decode("utf-8")
-                data = _replace_document_text(xml, replacements).encode("utf-8")
+                xml = _replace_document_text(xml, replacements)
+                data = _fill_store_proof_xml(xml, row).encode("utf-8")
             target.writestr(item, data)
 
     _emit(progress, 100, "完成")
@@ -427,6 +428,39 @@ def _fill_authorization_letter_xml(xml: str, row: AuthorizationLetterRow) -> str
     return re.sub(r"<w:p[\s\S]*?</w:p>", replace_paragraph, xml)
 
 
+def _fill_store_proof_xml(xml: str, row: StoreProofRow) -> str:
+    fill_next_date = False
+
+    def replace_paragraph(match: re.Match[str]) -> str:
+        nonlocal fill_next_date
+        paragraph = match.group(0)
+        text = _paragraph_text(paragraph)
+
+        if "兹证明奇点电商平台店铺认证主体，" in text:
+            return _replace_after_label_to_end(paragraph, "兹证明奇点电商平台店铺认证主体，", row.enterprise_name)
+
+        if "（营业执照：" in text and "）" in text:
+            return _replace_between_labels(paragraph, "（营业执照：", "）", row.business_license)
+
+        if "账户名称：" in text:
+            return _replace_after_label_to_end(paragraph, "账户名称：", row.account_name)
+
+        if "店铺地址：" in text:
+            return _replace_after_label_to_end(paragraph, "店铺地址：", row.shop_url)
+
+        if text.strip() == "杭州盛蕊网络科技有限公司":
+            fill_next_date = True
+            return paragraph
+
+        if fill_next_date:
+            fill_next_date = False
+            return _replace_entire_paragraph_text(paragraph, row.proof_date)
+
+        return paragraph
+
+    return re.sub(r"<w:p[\s\S]*?</w:p>", replace_paragraph, xml)
+
+
 def _replace_after_label(paragraph: str, label: str, replacement: str) -> str:
     text = _paragraph_text(paragraph)
     start = text.find(label)
@@ -442,6 +476,15 @@ def _replace_after_label(paragraph: str, label: str, replacement: str) -> str:
         blank_end += 1
     paragraph = _replace_text_range(paragraph, blank_start, blank_end, replacement, underline=False)
     return _strip_underlines(paragraph)
+
+
+def _replace_after_label_to_end(paragraph: str, label: str, replacement: str) -> str:
+    text = _paragraph_text(paragraph)
+    start = text.find(label)
+    if start == -1:
+        return paragraph
+    value_start = start + len(label)
+    return _replace_text_range(paragraph, value_start, len(text), replacement, underline=False)
 
 
 def _replace_after_label_whitespace(paragraph: str, label: str, replacement: str) -> str:
@@ -593,6 +636,13 @@ def _replace_visible_text(paragraph: str, old: str, new: str) -> str:
     if start == -1:
         return paragraph
     return _replace_text_range(paragraph, start, start + len(old), new, underline=False)
+
+
+def _replace_entire_paragraph_text(paragraph: str, replacement: str) -> str:
+    text = _paragraph_text(paragraph)
+    if not text:
+        return paragraph
+    return _replace_text_range(paragraph, 0, len(text), replacement, underline=False)
 
 
 def _parse_csv_text(

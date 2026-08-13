@@ -41,6 +41,13 @@ def visible_document_text(path: Path) -> str:
     return "".join(text.text or "" for text in root.findall(".//w:t", namespace))
 
 
+def document_media_and_anchor_count(path: Path) -> tuple[list[str], int]:
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+        xml = archive.read("word/document.xml").decode("utf-8")
+    return [name for name in names if name.startswith("word/media/")], xml.count("<wp:anchor")
+
+
 def contract_term_paragraph_xml(path: Path) -> str:
     xml = document_text(path)
     import re
@@ -151,6 +158,14 @@ def test_generate_contract_fills_party_and_term(tmp_path):
     assert "2026年7月1日" in xml
     assert "2027年7月1日" in xml
     assert "2026年7月2日" in xml
+
+
+def test_contract_template_contains_company_seal():
+    template = Path("resource/奇点电商平台产品服务合同模板.docx")
+
+    media, _anchor_count = document_media_and_anchor_count(template)
+
+    assert len(media) >= 2
 
 
 def test_generate_contract_replaces_entire_contract_term_blanks(tmp_path):
@@ -336,6 +351,27 @@ def test_parse_store_proof_xlsx_rows_reads_header_aliases():
     ]
 
 
+def test_store_proof_template_keeps_fillable_values_blank():
+    template = Path("resource/奇点电商平台店铺经营证明模板.docx")
+
+    text = visible_document_text(template)
+
+    assert "厦门淑莱汝信息科技有限公司" not in text
+    assert "91350206MAKGH6NDXJ" not in text
+    assert "厦门淑莱汝网络设计" not in text
+    assert "https://xmslr.qidian.hzshengruikj.cn/" not in text
+    assert "2026年7月19日" not in text
+
+
+def test_store_proof_template_contains_company_seal():
+    template = Path("resource/奇点电商平台店铺经营证明模板.docx")
+
+    media, anchor_count = document_media_and_anchor_count(template)
+
+    assert len(media) >= 2
+    assert anchor_count >= 1
+
+
 def test_generate_store_proof_replaces_template_values(tmp_path):
     template = Path("resource/奇点电商平台店铺经营证明模板.docx")
     output = tmp_path / "proof.docx"
@@ -440,6 +476,15 @@ def test_generate_authorization_letter_fills_enterprise_and_authorizer_date(tmp_
     assert "现授权人依法授权上海样例网络有限公司（下称" in text
     assert text.count("时间：2026年7月19日") == 1
     assert "被授权人（盖章）：      时间：      " in text
+
+
+def test_authorization_letter_template_contains_company_seal():
+    template = Path("resource/奇点电商平台授权函模板.docx")
+
+    media, anchor_count = document_media_and_anchor_count(template)
+
+    assert len(media) >= 1
+    assert anchor_count >= 1
 
 
 def test_generate_authorization_letter_removes_underlines_from_enterprise_slot(tmp_path):
